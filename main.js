@@ -1,5 +1,5 @@
 // ==========================================================
-// 🚀 Deno Deploy - Phone Search API (نسخة محسنة)
+// 🚀 Deno Deploy - Phone Search API (مع Firecrawl)
 // ==========================================================
 
 // ==========================================================
@@ -88,7 +88,8 @@ class RateLimiter {
 // ==========================================================
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "https://qfcsaiyuyxhibidrrmha.supabase.co";
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
-const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY") || "";
+// 🔥 مفتاح Firecrawl الخاص بك
+const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY") || "fc-a700fd57df374eac9b1f0ce215aab2e5";
 
 // إنشاء مثيلات
 const cache = new MemoryCache();
@@ -99,6 +100,9 @@ setInterval(() => {
   cache.cleanup();
   rateLimiter.cleanup();
 }, 60000);
+
+console.log('🚀 جاري تشغيل الخادم...');
+console.log(`🔥 Firecrawl API Key: ${FIRECRAWL_API_KEY ? '✅ موجود' : '❌ غير موجود'}`);
 
 // ==========================================================
 // 🚀 الخادم الرئيسي
@@ -268,7 +272,7 @@ async function handler(request) {
     }
 
     // ==========================================================
-    // 🌐 [المستوى 3] جلب عبر Firecrawl
+    // 🌐 [المستوى 3] جلب عبر Firecrawl 🔥
     // ==========================================================
     let names = [];
     let success = false;
@@ -281,6 +285,7 @@ async function handler(request) {
       
       try {
         const targetUrl = `https://b.raw2fid.net/wp-admin/admin-ajax.php?action=alosh_search&phone=${encodeURIComponent(scrapePhone)}`;
+        console.log(`📡 جلب البيانات من: ${targetUrl}`);
         
         const response = await fetch('https://api.firecrawl.dev/v2/scrape', {
           method: 'POST',
@@ -301,7 +306,7 @@ async function handler(request) {
           rawData = data;
           console.log('✅ استجابة Firecrawl مستلمة');
           
-          // 🔥 استراتيجية 1: استخراج من JSON
+          // استراتيجية 1: استخراج من JSON
           if (data.data && data.data.json) {
             const extractedNames = extractNamesFromJSON(data.data.json);
             if (extractedNames.length > 0) {
@@ -312,7 +317,7 @@ async function handler(request) {
             }
           }
           
-          // 🔥 استراتيجية 2: استخراج من HTML
+          // استراتيجية 2: استخراج من HTML
           if (!success || names.length === 0) {
             const htmlContent = data.data?.html || data.html || data.content || '';
             if (htmlContent && htmlContent.length >= 50) {
@@ -322,26 +327,20 @@ async function handler(request) {
                 success = true;
                 source = 'firecrawl_html';
                 console.log(`✅ استخراج ${names.length} اسم من HTML`);
-              }
-            }
-          }
-          
-          // 🔥 استراتيجية 3: استخراج بديل (هذه تزيد النتائج!)
-          if (!success || names.length === 0) {
-            const htmlContent = data.data?.html || data.html || data.content || '';
-            if (htmlContent && htmlContent.length >= 50) {
-              const alternativeNames = extractNamesAlternative(htmlContent);
-              if (alternativeNames.length > 0) {
-                names = alternativeNames;
-                success = true;
-                source = 'firecrawl_alternative';
-                console.log(`✅ استخراج ${names.length} اسم (طريقة بديلة)`);
+              } else {
+                const alternativeNames = extractNamesAlternative(htmlContent);
+                if (alternativeNames.length > 0) {
+                  names = alternativeNames;
+                  success = true;
+                  source = 'firecrawl_alternative';
+                  console.log(`✅ استخراج ${names.length} اسم (طريقة بديلة)`);
+                }
               }
             }
           }
         } else {
           const errorText = await response.text();
-          console.log(`⚠️ فشل Firecrawl: ${response.status}`);
+          console.log(`⚠️ فشل Firecrawl: ${response.status} - ${errorText}`);
           lastError = `Firecrawl error: ${response.status}`;
         }
       } catch (e) {
@@ -415,7 +414,8 @@ async function handler(request) {
         debug: {
           phone: scrapePhone,
           provider: provider,
-          has_firecrawl_key: !!FIRECRAWL_API_KEY
+          has_firecrawl_key: !!FIRECRAWL_API_KEY,
+          source: source
         }
       }), { 
         status: 200, 
@@ -468,7 +468,7 @@ async function handler(request) {
 }
 
 // ==========================================================
-// 📝 دوال استخراج الأسماء (محسنة لتعطي نتائج أكثر)
+// 📝 دوال استخراج الأسماء
 // ==========================================================
 
 function extractNamesFromJSON(jsonData) {
@@ -478,7 +478,6 @@ function extractNamesFromJSON(jsonData) {
     if (jsonData.result) {
       const text = jsonData.result;
       
-      // 1. استخراج اسم الشهرة
       const fameMatch = text.match(/اسم الشهرة[:\s]+([^\n]+)/);
       if (fameMatch) {
         let name = fameMatch[1].trim();
@@ -488,7 +487,6 @@ function extractNamesFromJSON(jsonData) {
         }
       }
       
-      // 2. استخراج الأسماء المرقمة (1- أحمد محمد)
       const numberedMatches = text.match(/\d+\s*[-–—]\s*([^\d\n]+)/g);
       if (numberedMatches) {
         numberedMatches.forEach(m => {
@@ -503,7 +501,6 @@ function extractNamesFromJSON(jsonData) {
         });
       }
       
-      // 3. استخراج الأسماء العربية (الأكثر شمولاً)
       const arabicPattern = /[\u0600-\u06FF]{3,}(?:\s+[\u0600-\u06FF]{3,}){0,3}/g;
       let arabicMatch;
       while ((arabicMatch = arabicPattern.exec(text)) !== null) {
@@ -518,16 +515,14 @@ function extractNamesFromJSON(jsonData) {
     console.error('خطأ في استخراج الأسماء من JSON:', e);
   }
   
-  // إزالة المكررات والنتائج غير المرغوب فيها
   return [...new Set(names)]
     .filter(name => !/^[\d+\s]+$/.test(name))
-    .slice(0, 20); // حد أقصى 20 اسم من JSON
+    .slice(0, 20);
 }
 
 function extractNamesFromResponse(html) {
   const names = [];
   
-  // 1. استخراج الأسماء المرقمة
   const numberedPattern = /(\d+)\s*[-–—]\s*([^\d\n<]+)/g;
   let match;
   while ((match = numberedPattern.exec(html)) !== null) {
@@ -538,7 +533,6 @@ function extractNamesFromResponse(html) {
     }
   }
   
-  // 2. استخراج الأسماء العربية
   const arabicNamePattern = /[\u0600-\u06FF]{3,}(?:\s+[\u0600-\u06FF]{3,}){0,3}/g;
   let arabicMatch;
   while ((arabicMatch = arabicNamePattern.exec(html)) !== null) {
@@ -549,7 +543,6 @@ function extractNamesFromResponse(html) {
     }
   }
   
-  // 3. استخراج الأسماء من علامات HTML المحددة
   const nameTags = /<[^>]*name[^>]*>([^<]+)<\/[^>]*>/gi;
   let tagMatch;
   while ((tagMatch = nameTags.exec(html)) !== null) {
@@ -560,16 +553,14 @@ function extractNamesFromResponse(html) {
     }
   }
   
-  return [...new Set(names)].slice(0, 100); // حد أقصى 100 اسم من HTML
+  return [...new Set(names)].slice(0, 100);
 }
 
 function extractNamesAlternative(html) {
   const names = [];
   
-  // إزالة علامات HTML
   const textContent = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
   
-  // 1. استخراج الكلمات العربية المكونة من 3+ أحرف
   const arabicPattern = /[\u0600-\u06FF]{3,}(?:\s+[\u0600-\u06FF]{3,}){0,2}/g;
   let match;
   while ((match = arabicPattern.exec(textContent)) !== null) {
@@ -580,7 +571,6 @@ function extractNamesAlternative(html) {
     }
   }
   
-  // 2. استخراج الأسماء بعد كلمات مفتاحية
   const keywords = ['اسم', 'الاسم', 'name', 'user', 'contact', 'صاحب', 'مالك', 'الشهرة', 'المستخدم', 'العميل'];
   for (const keyword of keywords) {
     const regex = new RegExp(`${keyword}[\\s:]*([^\\n<,]+)`, 'gi');
@@ -594,7 +584,6 @@ function extractNamesAlternative(html) {
     }
   }
   
-  // 3. استخراج الأسماء من نمط "رقم - اسم"
   const pattern = /\d+[\s-]+([\u0600-\u06FF\s]+)/g;
   let patternMatch;
   while ((patternMatch = pattern.exec(textContent)) !== null) {
@@ -605,7 +594,7 @@ function extractNamesAlternative(html) {
     }
   }
   
-  return [...new Set(names)].slice(0, 50); // حد أقصى 50 اسم
+  return [...new Set(names)].slice(0, 50);
 }
 
 function cleanExtractedName(name) {
@@ -630,5 +619,7 @@ function detectProvider(cleanPhone) {
 // ==========================================================
 console.log('🚀 تشغيل خادم Deno Deploy...');
 console.log('📌 الخادم يعمل على المنفذ 8000');
+console.log(`🔥 Firecrawl API Key: ${FIRECRAWL_API_KEY ? '✅ موجود' : '❌ غير موجود'}`);
+console.log(`🔑 المفتاح: ${FIRECRAWL_API_KEY.substring(0, 15)}...`);
 
 Deno.serve({ port: 8000, hostname: "0.0.0.0" }, handler);

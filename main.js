@@ -2,7 +2,7 @@
 class MemoryCache {
   constructor() {
     this.cache = new Map();
-    this.defaultTTL = 60; // 3 أيام
+    this.defaultTTL = 8640000; // 3 أيام
   }
 
   async match(request) {

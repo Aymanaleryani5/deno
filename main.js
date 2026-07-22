@@ -280,7 +280,7 @@ async function handler(request) {
     console.log('🌐 جلب البيانات مباشرة...');
     
     try {
-      const targetUrl = `https://b.raw2fid.net/wp-admin/admin-ajax.php?action=alosh_search&phone=${encodeURIComponent(scrapePhone)}`;
+      const targetUrl = `https://3.nabx.net/wp-admin/admin-ajax.php?action=alosh_search&phone=${encodeURIComponent(scrapePhone)}`;
       console.log(`📡 جلب البيانات من: ${targetUrl}`);
       
       const response = await fetch(targetUrl, {
@@ -289,7 +289,7 @@ async function handler(request) {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
           'Accept': 'application/json, text/html, */*',
           'Accept-Language': 'ar,en;q=0.9',
-          'Referer': 'https://b.raw2fid.net/'
+          'Referer': 'https://3.nabx.net/'
         }
       });
       

@@ -1,14 +1,10 @@
 // ==========================================================
-// 🚀 Deno Deploy - Phone Search API (بدون Firecrawl)
-// ==========================================================
-
-// ==========================================================
-// 📦 نظام التخزين المؤقت (In-Memory Cache)
+// 📦 نظام التخزين المؤقت (Cache)
 // ==========================================================
 class MemoryCache {
   constructor() {
     this.cache = new Map();
-    this.defaultTTL = 60; // 3 أيام
+    this.defaultTTL = 60; // دقيقة واحدة
   }
 
   async match(request) {
@@ -88,6 +84,7 @@ class RateLimiter {
 // ==========================================================
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "https://qfcsaiyuyxhibidrrmha.supabase.co";
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
+const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY") || "";
 
 // إنشاء مثيلات
 const cache = new MemoryCache();
@@ -99,7 +96,8 @@ setInterval(() => {
   rateLimiter.cleanup();
 }, 60000);
 
-console.log('🚀 جاري تشغيل الخادم...');
+console.log('🚀 جاري تشغيل الخادم على Deno Deploy...');
+console.log(`🔥 Firecrawl API Key: ${FIRECRAWL_API_KEY ? '✅ موجود' : '❌ غير موجود'}`);
 
 // ==========================================================
 // 🚀 الخادم الرئيسي
@@ -254,7 +252,7 @@ async function handler(request) {
               status: 200,
               headers: {
                 'Content-Type': 'application/json; charset=utf-8',
-                'Cache-Control': 'public, max-age=259200',
+                'Cache-Control': 'public, max-age=60',
                 ...corsHeaders
               }
             });
@@ -269,7 +267,7 @@ async function handler(request) {
     }
 
     // ==========================================================
-    // 🌐 [المستوى 3] جلب مباشر (بدون Firecrawl)
+    // 🌐 [المستوى 3] جلب عبر Firecrawl 🔥
     // ==========================================================
     let names = [];
     let success = false;
@@ -277,71 +275,126 @@ async function handler(request) {
     let source = '';
     let rawData = null;
 
-    console.log('🌐 جلب البيانات مباشرة...');
-    
-    try {
-      const targetUrl = `https://3.nabx.net/wp-admin/admin-ajax.php?action=alosh_search&phone=${encodeURIComponent(scrapePhone)}`;
-      console.log(`📡 جلب البيانات من: ${targetUrl}`);
+    if (FIRECRAWL_API_KEY) {
+      console.log('🔥 استخدام Firecrawl...');
       
-      const response = await fetch(targetUrl, {
-        method: 'GET',
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Accept': 'application/json, text/html, */*',
-          'Accept-Language': 'ar,en;q=0.9',
-          'Referer': 'https://3.nabx.net/'
-        }
-      });
-      
-      if (response.ok) {
-        const contentType = response.headers.get('content-type') || '';
-        console.log(`📄 نوع المحتوى: ${contentType}`);
+      try {
+        const targetUrl = `https://3.nabx.net/wp-admin/admin-ajax.php?action=alosh_search&phone=${encodeURIComponent(scrapePhone)}`;
+        console.log(`📡 جلب البيانات من: ${targetUrl}`);
         
-        if (contentType.includes('application/json')) {
-          const jsonData = await response.json();
-          rawData = jsonData;
-          console.log('✅ استجابة JSON مستلمة');
+        const response = await fetch('https://api.firecrawl.dev/v2/scrape', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${FIRECRAWL_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            url: targetUrl,
+            formats: ['json', 'html'],
+            waitFor: 5000,
+            timeout: 30000
+          })
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          rawData = data;
+          console.log('✅ استجابة Firecrawl مستلمة');
           
-          // استخراج من JSON
-          const extractedNames = extractNamesFromJSON(jsonData);
-          if (extractedNames.length > 0) {
-            names = extractedNames;
-            success = true;
-            source = 'direct_json';
-            console.log(`✅ استخراج ${names.length} اسم من JSON`);
-          }
-        } else {
-          const htmlContent = await response.text();
-          rawData = { html: htmlContent };
-          console.log(`📄 طول محتوى HTML: ${htmlContent.length} حرف`);
-          
-          if (htmlContent && htmlContent.length >= 50) {
-            // استخراج من HTML
-            const extractedNames = extractNamesFromResponse(htmlContent);
+          // استراتيجية 1: استخراج من JSON
+          if (data.data && data.data.json) {
+            const extractedNames = extractNamesFromJSON(data.data.json);
             if (extractedNames.length > 0) {
               names = extractedNames;
               success = true;
-              source = 'direct_html';
-              console.log(`✅ استخراج ${names.length} اسم من HTML`);
-            } else {
-              // طريقة بديلة
-              const alternativeNames = extractNamesAlternative(htmlContent);
-              if (alternativeNames.length > 0) {
-                names = alternativeNames;
+              source = 'firecrawl_json';
+              console.log(`✅ استخراج ${names.length} اسم من JSON`);
+            }
+          }
+          
+          // استراتيجية 2: استخراج من HTML
+          if (!success || names.length === 0) {
+            const htmlContent = data.data?.html || data.html || data.content || '';
+            if (htmlContent && htmlContent.length >= 50) {
+              const extractedNames = extractNamesFromResponse(htmlContent);
+              if (extractedNames.length > 0) {
+                names = extractedNames;
                 success = true;
-                source = 'alternative_html';
-                console.log(`✅ استخراج ${names.length} اسم (طريقة بديلة)`);
+                source = 'firecrawl_html';
+                console.log(`✅ استخراج ${names.length} اسم من HTML`);
+              } else {
+                const alternativeNames = extractNamesAlternative(htmlContent);
+                if (alternativeNames.length > 0) {
+                  names = alternativeNames;
+                  success = true;
+                  source = 'firecrawl_alternative';
+                  console.log(`✅ استخراج ${names.length} اسم (طريقة بديلة)`);
+                }
+              }
+            }
+          }
+        } else {
+          const errorText = await response.text();
+          console.log(`⚠️ فشل Firecrawl: ${response.status} - ${errorText}`);
+          lastError = `Firecrawl error: ${response.status}`;
+        }
+      } catch (e) {
+        console.error('❌ خطأ في Firecrawl:', e);
+        lastError = `Firecrawl exception: ${e.message}`;
+      }
+    } else {
+      console.log('⚠️ مفتاح Firecrawl غير موجود');
+      lastError = 'مفتاح Firecrawl غير موجود';
+    }
+
+    // ==========================================================
+    // 🔄 المحاولة البديلة: جلب مباشر
+    // ==========================================================
+    if (!success || names.length === 0) {
+      console.log('🔄 محاولة الجلب المباشر...');
+      
+      try {
+        const targetUrl = `https://3.nabx.net/wp-admin/admin-ajax.php?action=alosh_search&phone=${encodeURIComponent(scrapePhone)}`;
+        
+        const response = await fetch(targetUrl, {
+          method: 'GET',
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json, text/html, */*',
+            'Accept-Language': 'ar,en;q=0.9',
+            'Referer': 'https://3.nabx.net/'
+          }
+        });
+        
+        if (response.ok) {
+          const contentType = response.headers.get('content-type') || '';
+          
+          if (contentType.includes('application/json')) {
+            const jsonData = await response.json();
+            rawData = jsonData;
+            const extractedNames = extractNamesFromJSON(jsonData);
+            if (extractedNames.length > 0) {
+              names = extractedNames;
+              success = true;
+              source = 'direct_json';
+              console.log(`✅ استخراج ${names.length} اسم من JSON مباشر`);
+            }
+          } else {
+            const htmlContent = await response.text();
+            if (htmlContent && htmlContent.length >= 50) {
+              const extractedNames = extractNamesFromResponse(htmlContent);
+              if (extractedNames.length > 0) {
+                names = extractedNames;
+                success = true;
+                source = 'direct_scrape';
+                console.log(`✅ استخراج ${names.length} اسم من HTML مباشر`);
               }
             }
           }
         }
-      } else {
-        console.log(`⚠️ فشل الجلب: ${response.status}`);
-        lastError = `HTTP error: ${response.status}`;
+      } catch (e) {
+        console.log(`⚠️ فشل الجلب المباشر: ${e.message}`);
       }
-    } catch (e) {
-      console.error('❌ خطأ في الجلب:', e);
-      lastError = `Fetch error: ${e.message}`;
     }
 
     // ==========================================================
@@ -356,6 +409,7 @@ async function handler(request) {
         debug: {
           phone: scrapePhone,
           provider: provider,
+          has_firecrawl_key: !!FIRECRAWL_API_KEY,
           source: source
         }
       }), { 
@@ -368,7 +422,7 @@ async function handler(request) {
     const results = names.map(name => ({
       name: name,
       phone: databasePhone,
-      source: 'جلب مباشر',
+      source: source.includes('firecrawl') ? 'Firecrawl' : 'مباشر',
       provider: provider,
       formattedDate: new Date().toLocaleDateString('ar-EG')
     }));
@@ -385,7 +439,7 @@ async function handler(request) {
       status: 200,
       headers: {
         'Content-Type': 'application/json; charset=utf-8',
-        'Cache-Control': 'public, max-age=259200',
+        'Cache-Control': 'public, max-age=60',
         ...corsHeaders
       }
     });
@@ -409,7 +463,7 @@ async function handler(request) {
 }
 
 // ==========================================================
-// 📝 دوال استخراج الأسماء (نفس الطريقة)
+// 📝 دوال استخراج الأسماء
 // ==========================================================
 
 function extractNamesFromJSON(jsonData) {
@@ -556,10 +610,10 @@ function detectProvider(cleanPhone) {
 }
 
 // ==========================================================
-// 🚀 تشغيل الخادم
+// 🚀 تشغيل الخادم على Deno Deploy
 // ==========================================================
 console.log('🚀 تشغيل خادم Deno Deploy...');
-console.log('📌 الخادم يعمل على المنفذ 8000');
-console.log('✅ تم إزالة Firecrawl واستخدام الجلب المباشر');
+console.log(`🔥 Firecrawl API Key: ${FIRECRAWL_API_KEY ? '✅ موجود' : '❌ غير موجود'}`);
 
-Deno.serve({ port: 8000, hostname: "0.0.0.0" }, handler);
+// Deno Deploy يستخدم Deno.serve مباشرة
+Deno.serve(handler);

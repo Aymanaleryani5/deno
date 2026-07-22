@@ -83,7 +83,7 @@ class RateLimiter {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "https://qfcsaiyuyxhibidrrmha.supabase.co";
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
 // 🔥 مفتاح Firecrawl الخاص بك
-const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY") || "fc-a700fd57df374eac9b1f0ce215aab2e5";
+const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY") || "fc-edbcd80a56574c4fa3679f4ebf672f56";
 
 // إنشاء مثيلات
 const cache = new MemoryCache();

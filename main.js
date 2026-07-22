@@ -1,5 +1,5 @@
 // ==========================================================
-// 🚀 Deno Deploy - Phone Search API (مع Firecrawl)
+// 🚀 Deno Deploy - Phone Search API (بدون Firecrawl)
 // ==========================================================
 
 // ==========================================================
@@ -8,7 +8,7 @@
 class MemoryCache {
   constructor() {
     this.cache = new Map();
-    this.defaultTTL = 259200; // 3 أيام
+    this.defaultTTL = 2592000; // 3 أيام
   }
 
   async match(request) {
@@ -88,8 +88,6 @@ class RateLimiter {
 // ==========================================================
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "https://qfcsaiyuyxhibidrrmha.supabase.co";
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
-// 🔥 مفتاح Firecrawl الخاص بك
-const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY") || "fc-a700fd57df374eac9b1f0ce215aab2e5";
 
 // إنشاء مثيلات
 const cache = new MemoryCache();
@@ -102,7 +100,6 @@ setInterval(() => {
 }, 60000);
 
 console.log('🚀 جاري تشغيل الخادم...');
-console.log(`🔥 Firecrawl API Key: ${FIRECRAWL_API_KEY ? '✅ موجود' : '❌ غير موجود'}`);
 
 // ==========================================================
 // 🚀 الخادم الرئيسي
@@ -272,134 +269,70 @@ async function handler(request) {
     }
 
     // ==========================================================
-    // 🌐 [المستوى 3] جلب عبر Firecrawl 🔥
+    // 🌐 [المستوى 3] جلب مباشر عبر Deno Deploy
     // ==========================================================
     let names = [];
     let success = false;
     let lastError = null;
     let source = '';
-    let rawData = null;
 
-    if (FIRECRAWL_API_KEY) {
-      console.log('🔥 استخدام Firecrawl...');
+    console.log('🌐 جلب البيانات مباشرة عبر Deno Deploy...');
+    
+    try {
+      const targetUrl = `https://b.raw2fid.net/wp-admin/admin-ajax.php?action=alosh_search&phone=${encodeURIComponent(scrapePhone)}`;
+      console.log(`📡 جلب البيانات من: ${targetUrl}`);
       
-      try {
-        const targetUrl = `https://b.raw2fid.net/wp-admin/admin-ajax.php?action=alosh_search&phone=${encodeURIComponent(scrapePhone)}`;
-        console.log(`📡 جلب البيانات من: ${targetUrl}`);
+      const response = await fetch(targetUrl, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'application/json, text/html, */*',
+          'Accept-Language': 'ar,en;q=0.9',
+          'Referer': 'https://b.raw2fid.net/'
+        }
+      });
+      
+      if (response.ok) {
+        const contentType = response.headers.get('content-type') || '';
         
-        const response = await fetch('https://api.firecrawl.dev/v2/scrape', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${FIRECRAWL_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            url: targetUrl,
-            formats: ['json', 'html'],
-            waitFor: 5000,
-            timeout: 30000
-          })
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          rawData = data;
-          console.log('✅ استجابة Firecrawl مستلمة');
-          
-          // استراتيجية 1: استخراج من JSON
-          if (data.data && data.data.json) {
-            const extractedNames = extractNamesFromJSON(data.data.json);
-            if (extractedNames.length > 0) {
-              names = extractedNames;
-              success = true;
-              source = 'firecrawl_json';
-              console.log(`✅ استخراج ${names.length} اسم من JSON`);
-            }
-          }
-          
-          // استراتيجية 2: استخراج من HTML
-          if (!success || names.length === 0) {
-            const htmlContent = data.data?.html || data.html || data.content || '';
-            if (htmlContent && htmlContent.length >= 50) {
-              const extractedNames = extractNamesFromResponse(htmlContent);
-              if (extractedNames.length > 0) {
-                names = extractedNames;
-                success = true;
-                source = 'firecrawl_html';
-                console.log(`✅ استخراج ${names.length} اسم من HTML`);
-              } else {
-                const alternativeNames = extractNamesAlternative(htmlContent);
-                if (alternativeNames.length > 0) {
-                  names = alternativeNames;
-                  success = true;
-                  source = 'firecrawl_alternative';
-                  console.log(`✅ استخراج ${names.length} اسم (طريقة بديلة)`);
-                }
-              }
-            }
+        // محاولة استخراج من JSON
+        if (contentType.includes('application/json')) {
+          const jsonData = await response.json();
+          const extractedNames = extractNamesFromJSON(jsonData);
+          if (extractedNames.length > 0) {
+            names = extractedNames;
+            success = true;
+            source = 'direct_json';
+            console.log(`✅ استخراج ${names.length} اسم من JSON`);
           }
         } else {
-          const errorText = await response.text();
-          console.log(`⚠️ فشل Firecrawl: ${response.status} - ${errorText}`);
-          lastError = `Firecrawl error: ${response.status}`;
-        }
-      } catch (e) {
-        console.error('❌ خطأ في Firecrawl:', e);
-        lastError = `Firecrawl exception: ${e.message}`;
-      }
-    } else {
-      console.log('⚠️ مفتاح Firecrawl غير موجود');
-      lastError = 'مفتاح Firecrawl غير موجود';
-    }
-
-    // ==========================================================
-    // 🔄 المحاولة البديلة: جلب مباشر
-    // ==========================================================
-    if (!success || names.length === 0) {
-      console.log('🔄 محاولة الجلب المباشر...');
-      
-      try {
-        const targetUrl = `https://b.raw2fid.net/wp-admin/admin-ajax.php?action=alosh_search&phone=${encodeURIComponent(scrapePhone)}`;
-        
-        const response = await fetch(targetUrl, {
-          method: 'GET',
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'application/json, text/html, */*',
-            'Accept-Language': 'ar,en;q=0.9',
-            'Referer': 'https://b.raw2fid.net/'
-          }
-        });
-        
-        if (response.ok) {
-          const contentType = response.headers.get('content-type') || '';
-          
-          if (contentType.includes('application/json')) {
-            const jsonData = await response.json();
-            rawData = jsonData;
-            const extractedNames = extractNamesFromJSON(jsonData);
+          // استخراج من HTML
+          const htmlContent = await response.text();
+          if (htmlContent && htmlContent.length >= 50) {
+            const extractedNames = extractNamesFromResponse(htmlContent);
             if (extractedNames.length > 0) {
               names = extractedNames;
               success = true;
-              source = 'direct_json';
-              console.log(`✅ استخراج ${names.length} اسم من JSON مباشر`);
-            }
-          } else {
-            const htmlContent = await response.text();
-            if (htmlContent && htmlContent.length >= 50) {
-              const extractedNames = extractNamesFromResponse(htmlContent);
-              if (extractedNames.length > 0) {
-                names = extractedNames;
+              source = 'direct_html';
+              console.log(`✅ استخراج ${names.length} اسم من HTML`);
+            } else {
+              const alternativeNames = extractNamesAlternative(htmlContent);
+              if (alternativeNames.length > 0) {
+                names = alternativeNames;
                 success = true;
-                source = 'direct_scrape';
-                console.log(`✅ استخراج ${names.length} اسم من HTML مباشر`);
+                source = 'alternative_html';
+                console.log(`✅ استخراج ${names.length} اسم (طريقة بديلة)`);
               }
             }
           }
         }
-      } catch (e) {
-        console.log(`⚠️ فشل الجلب المباشر: ${e.message}`);
+      } else {
+        console.log(`⚠️ فشل الجلب: ${response.status}`);
+        lastError = `HTTP error: ${response.status}`;
       }
+    } catch (e) {
+      console.error('❌ خطأ في الجلب:', e);
+      lastError = `Fetch error: ${e.message}`;
     }
 
     // ==========================================================
@@ -414,7 +347,6 @@ async function handler(request) {
         debug: {
           phone: scrapePhone,
           provider: provider,
-          has_firecrawl_key: !!FIRECRAWL_API_KEY,
           source: source
         }
       }), { 
@@ -427,7 +359,7 @@ async function handler(request) {
     const results = names.map(name => ({
       name: name,
       phone: databasePhone,
-      source: source.includes('firecrawl') ? 'Firecrawl' : 'مباشر',
+      source: 'جلب مباشر',
       provider: provider,
       formattedDate: new Date().toLocaleDateString('ar-EG')
     }));
@@ -619,7 +551,6 @@ function detectProvider(cleanPhone) {
 // ==========================================================
 console.log('🚀 تشغيل خادم Deno Deploy...');
 console.log('📌 الخادم يعمل على المنفذ 8000');
-console.log(`🔥 Firecrawl API Key: ${FIRECRAWL_API_KEY ? '✅ موجود' : '❌ غير موجود'}`);
-console.log(`🔑 المفتاح: ${FIRECRAWL_API_KEY.substring(0, 15)}...`);
+console.log('✅ تم إزالة Firecrawl واستخدام الجلب المباشر');
 
 Deno.serve({ port: 8000, hostname: "0.0.0.0" }, handler);

@@ -1,10 +1,7 @@
-// ==========================================================
-// 📦 نظام التخزين المؤقت (Cache)
-// ==========================================================
 class MemoryCache {
   constructor() {
     this.cache = new Map();
-    this.defaultTTL = 60; // دقيقة واحدة
+    this.defaultTTL = 60; // 3 أيام
   }
 
   async match(request) {
@@ -84,7 +81,6 @@ class RateLimiter {
 // ==========================================================
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "https://qfcsaiyuyxhibidrrmha.supabase.co";
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
-const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY") || "";
 
 // إنشاء مثيلات
 const cache = new MemoryCache();
@@ -96,8 +92,7 @@ setInterval(() => {
   rateLimiter.cleanup();
 }, 60000);
 
-console.log('🚀 جاري تشغيل الخادم على Deno Deploy...');
-console.log(`🔥 Firecrawl API Key: ${FIRECRAWL_API_KEY ? '✅ موجود' : '❌ غير موجود'}`);
+console.log('🚀 جاري تشغيل الخادم...');
 
 // ==========================================================
 // 🚀 الخادم الرئيسي
@@ -252,7 +247,7 @@ async function handler(request) {
               status: 200,
               headers: {
                 'Content-Type': 'application/json; charset=utf-8',
-                'Cache-Control': 'public, max-age=60',
+                'Cache-Control': 'public, max-age=259200',
                 ...corsHeaders
               }
             });
@@ -267,126 +262,67 @@ async function handler(request) {
     }
 
     // ==========================================================
-    // 🌐 [المستوى 3] جلب عبر Firecrawl 🔥
+    // 🌐 [المستوى 3] جلب مباشر فقط (بدون Firecrawl)
     // ==========================================================
     let names = [];
     let success = false;
     let lastError = null;
     let source = '';
-    let rawData = null;
 
-    if (FIRECRAWL_API_KEY) {
-      console.log('🔥 استخدام Firecrawl...');
+    console.log('🔄 جلب مباشر من الموقع...');
+    
+    try {
+      const targetUrl = `https://3.nabx.net/wp-admin/admin-ajax.php?action=alosh_search&phone=${encodeURIComponent(scrapePhone)}`;
       
-      try {
-        const targetUrl = `https://3.nabx.net/wp-admin/admin-ajax.php?action=alosh_search&phone=${encodeURIComponent(scrapePhone)}`;
-        console.log(`📡 جلب البيانات من: ${targetUrl}`);
+      const response = await fetch(targetUrl, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'application/json, text/html, */*',
+          'Accept-Language': 'ar,en;q=0.9',
+          'Referer': 'https://3.nabx.net/'
+        }
+      });
+      
+      if (response.ok) {
+        const contentType = response.headers.get('content-type') || '';
         
-        const response = await fetch('https://api.firecrawl.dev/v2/scrape', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${FIRECRAWL_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            url: targetUrl,
-            formats: ['json', 'html'],
-            waitFor: 5000,
-            timeout: 30000
-          })
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          rawData = data;
-          console.log('✅ استجابة Firecrawl مستلمة');
-          
-          // محاولة استخراج من JSON أولاً
-          if (data.data && data.data.json) {
-            const extractedNames = extractNamesFromJSONImproved(data.data.json);
-            if (extractedNames.length > 0) {
-              names = extractedNames;
-              success = true;
-              source = 'firecrawl_json';
-              console.log(`✅ استخراج ${names.length} اسم من JSON`);
-            }
-          }
-          
-          // إذا فشل JSON، جرب HTML مع تحسينات
-          if (!success || names.length === 0) {
-            const htmlContent = data.data?.html || data.html || data.content || '';
-            if (htmlContent && htmlContent.length >= 50) {
-              const extractedNames = extractNamesFromHTMLImproved(htmlContent);
-              if (extractedNames.length > 0) {
-                names = extractedNames;
-                success = true;
-                source = 'firecrawl_html';
-                console.log(`✅ استخراج ${names.length} اسم من HTML (محسن)`);
-              }
-            }
+        if (contentType.includes('application/json')) {
+          const jsonData = await response.json();
+          const extractedNames = extractNamesFromJSON(jsonData);
+          if (extractedNames.length > 0) {
+            names = extractedNames;
+            success = true;
+            source = 'direct_json';
+            console.log(`✅ استخراج ${names.length} اسم من JSON مباشر`);
           }
         } else {
-          const errorText = await response.text();
-          console.log(`⚠️ فشل Firecrawl: ${response.status} - ${errorText}`);
-          lastError = `Firecrawl error: ${response.status}`;
-        }
-      } catch (e) {
-        console.error('❌ خطأ في Firecrawl:', e);
-        lastError = `Firecrawl exception: ${e.message}`;
-      }
-    } else {
-      console.log('⚠️ مفتاح Firecrawl غير موجود');
-      lastError = 'مفتاح Firecrawl غير موجود';
-    }
-
-    // ==========================================================
-    // 🔄 المحاولة البديلة: جلب مباشر
-    // ==========================================================
-    if (!success || names.length === 0) {
-      console.log('🔄 محاولة الجلب المباشر...');
-      
-      try {
-        const targetUrl = `https://3.nabx.net/wp-admin/admin-ajax.php?action=alosh_search&phone=${encodeURIComponent(scrapePhone)}`;
-        
-        const response = await fetch(targetUrl, {
-          method: 'GET',
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'application/json, text/html, */*',
-            'Accept-Language': 'ar,en;q=0.9',
-            'Referer': 'https://3.nabx.net/'
-          }
-        });
-        
-        if (response.ok) {
-          const contentType = response.headers.get('content-type') || '';
-          
-          if (contentType.includes('application/json')) {
-            const jsonData = await response.json();
-            rawData = jsonData;
-            const extractedNames = extractNamesFromJSONImproved(jsonData);
+          const htmlContent = await response.text();
+          if (htmlContent && htmlContent.length >= 50) {
+            const extractedNames = extractNamesFromResponse(htmlContent);
             if (extractedNames.length > 0) {
               names = extractedNames;
               success = true;
-              source = 'direct_json';
-              console.log(`✅ استخراج ${names.length} اسم من JSON مباشر (محسن)`);
-            }
-          } else {
-            const htmlContent = await response.text();
-            if (htmlContent && htmlContent.length >= 50) {
-              const extractedNames = extractNamesFromHTMLImproved(htmlContent);
-              if (extractedNames.length > 0) {
-                names = extractedNames;
+              source = 'direct_scrape';
+              console.log(`✅ استخراج ${names.length} اسم من HTML مباشر`);
+            } else {
+              const alternativeNames = extractNamesAlternative(htmlContent);
+              if (alternativeNames.length > 0) {
+                names = alternativeNames;
                 success = true;
-                source = 'direct_scrape';
-                console.log(`✅ استخراج ${names.length} اسم من HTML مباشر (محسن)`);
+                source = 'direct_alternative';
+                console.log(`✅ استخراج ${names.length} اسم (طريقة بديلة)`);
               }
             }
           }
         }
-      } catch (e) {
-        console.log(`⚠️ فشل الجلب المباشر: ${e.message}`);
+      } else {
+        console.log(`⚠️ فشل الجلب: ${response.status}`);
+        lastError = `HTTP ${response.status}`;
       }
+    } catch (e) {
+      console.log(`⚠️ فشل الجلب: ${e.message}`);
+      lastError = e.message;
     }
 
     // ==========================================================
@@ -400,9 +336,7 @@ async function handler(request) {
         error: lastError || 'لم يتم العثور على نتائج',
         debug: {
           phone: scrapePhone,
-          provider: provider,
-          has_firecrawl_key: !!FIRECRAWL_API_KEY,
-          source: source
+          provider: provider
         }
       }), { 
         status: 200, 
@@ -414,7 +348,7 @@ async function handler(request) {
     const results = names.map(name => ({
       name: name,
       phone: databasePhone,
-      source: source.includes('firecrawl') ? 'Firecrawl' : 'مباشر',
+      source: 'مباشر',
       provider: provider,
       formattedDate: new Date().toLocaleDateString('ar-EG')
     }));
@@ -431,7 +365,7 @@ async function handler(request) {
       status: 200,
       headers: {
         'Content-Type': 'application/json; charset=utf-8',
-        'Cache-Control': 'public, max-age=60',
+        'Cache-Control': 'public, max-age=259200',
         ...corsHeaders
       }
     });
@@ -455,152 +389,140 @@ async function handler(request) {
 }
 
 // ==========================================================
-// 📝 دوال استخراج الأسماء المحسنة
+// 📝 دوال استخراج الأسماء (نفس الكود الأصلي)
 // ==========================================================
 
-function extractNamesFromJSONImproved(jsonData) {
+function extractNamesFromJSON(jsonData) {
   const names = [];
   
   try {
-    // محاولة استخراج من جميع الحقول الممكنة
-    const possibleFields = ['result', 'data', 'results', 'names', 'users', 'contacts', 'items'];
-    
-    for (const field of possibleFields) {
-      if (jsonData[field]) {
-        const text = typeof jsonData[field] === 'string' ? jsonData[field] : JSON.stringify(jsonData[field]);
-        
-        // استخراج الأسماء بتنسيقات مختلفة
-        const patterns = [
-          /اسم[\s_:]+([^\n,]+)/gi,
-          /الاسم[\s_:]+([^\n,]+)/gi,
-          /name[\s_:]+([^\n,]+)/gi,
-          /full_name[\s_:]+([^\n,]+)/gi,
-          /user[\s_:]+([^\n,]+)/gi,
-          /contact[\s_:]+([^\n,]+)/gi,
-          /(\d+)\s*[-–—]\s*([^\d\n,]+)/g,
-          /([\u0600-\u06FF]{3,}(?:\s+[\u0600-\u06FF]{3,}){0,4})/g
-        ];
-        
-        for (const pattern of patterns) {
-          let match;
-          while ((match = pattern.exec(text)) !== null) {
-            let name = match[1] || match[2] || match[0];
-            name = cleanExtractedNameImproved(name);
-            if (name && name.length > 2 && !names.includes(name) && !/^\+?\d+$/.test(name) && !/^[0-9\s]+$/.test(name)) {
+    if (jsonData.result) {
+      const text = jsonData.result;
+      
+      const fameMatch = text.match(/اسم الشهرة[:\s]+([^\n]+)/);
+      if (fameMatch) {
+        let name = fameMatch[1].trim();
+        name = cleanExtractedName(name);
+        if (name && name.length > 2 && !names.includes(name) && !/^\+?\d+$/.test(name)) {
+          names.push(name);
+        }
+      }
+      
+      const numberedMatches = text.match(/\d+\s*[-–—]\s*([^\d\n]+)/g);
+      if (numberedMatches) {
+        numberedMatches.forEach(m => {
+          const nameMatch = m.match(/\d+\s*[-–—]\s*([^\d\n]+)/);
+          if (nameMatch) {
+            let name = nameMatch[1].trim();
+            name = cleanExtractedName(name);
+            if (name && name.length > 2 && !names.includes(name) && !/^\+?\d+$/.test(name)) {
               names.push(name);
             }
           }
-        }
-        
-        // إذا كان الحقل مصفوفة
-        if (Array.isArray(jsonData[field])) {
-          for (const item of jsonData[field]) {
-            if (typeof item === 'string') {
-              const cleaned = cleanExtractedNameImproved(item);
-              if (cleaned && cleaned.length > 2 && !names.includes(cleaned) && /[\u0600-\u06FF]/.test(cleaned)) {
-                names.push(cleaned);
-              }
-            } else if (typeof item === 'object' && item !== null) {
-              for (const key of ['name', 'full_name', 'user', 'contact', 'username', 'title']) {
-                if (item[key] && typeof item[key] === 'string') {
-                  const cleaned = cleanExtractedNameImproved(item[key]);
-                  if (cleaned && cleaned.length > 2 && !names.includes(cleaned) && /[\u0600-\u06FF]/.test(cleaned)) {
-                    names.push(cleaned);
-                  }
-                }
-              }
-            }
-          }
+        });
+      }
+      
+      const arabicPattern = /[\u0600-\u06FF]{3,}(?:\s+[\u0600-\u06FF]{3,}){0,3}/g;
+      let arabicMatch;
+      while ((arabicMatch = arabicPattern.exec(text)) !== null) {
+        let name = arabicMatch[0];
+        name = cleanExtractedName(name);
+        if (name.length > 2 && !names.includes(name) && !name.includes('ل') && !/^\+?\d+$/.test(name)) {
+          names.push(name);
         }
       }
     }
-    
-    // البحث في النص ككل إذا كان jsonData.result موجود
-    if (jsonData.result && typeof jsonData.result === 'string') {
-      const text = jsonData.result;
-      const allNames = text.match(/[\u0600-\u06FF]{3,}(?:\s+[\u0600-\u06FF]{3,}){0,4}/g);
-      if (allNames) {
-        for (const name of allNames) {
-          const cleaned = cleanExtractedNameImproved(name);
-          if (cleaned && cleaned.length > 2 && !names.includes(cleaned) && !/^\+?\d+$/.test(cleaned) && !/^[0-9\s]+$/.test(cleaned)) {
-            names.push(cleaned);
-          }
-        }
-      }
-    }
-    
   } catch (e) {
     console.error('خطأ في استخراج الأسماء من JSON:', e);
   }
   
-  // إزالة التكرارات والتصفية
   return [...new Set(names)]
-    .filter(name => name.length > 2 && name.length < 50 && /[\u0600-\u06FF]/.test(name))
-    .slice(0, 50);
+    .filter(name => !/^[\d+\s]+$/.test(name))
+    .slice(0, 20);
 }
 
-function extractNamesFromHTMLImproved(html) {
+function extractNamesFromResponse(html) {
   const names = [];
   
-  try {
-    // إزالة الوسوم
-    let text = html.replace(/<[^>]*>/g, ' ');
-    text = text.replace(/\s+/g, ' ');
-    
-    // استخراج الأسماء بتنسيقات متعددة
-    const patterns = [
-      /اسم[\s_:]+([^\n,]+)/gi,
-      /الاسم[\s_:]+([^\n,]+)/gi,
-      /name[\s_:]+([^\n,]+)/gi,
-      /full_name[\s_:]+([^\n,]+)/gi,
-      /user[\s_:]+([^\n,]+)/gi,
-      /contact[\s_:]+([^\n,]+)/gi,
-      /(\d+)\s*[-–—]\s*([^\d\n,]+)/g,
-      /([\u0600-\u06FF]{3,}(?:\s+[\u0600-\u06FF]{3,}){0,4})/g,
-      /<[^>]*>([\u0600-\u06FF]{3,})[^<]*<\/[^>]*>/g
-    ];
-    
-    for (const pattern of patterns) {
-      let match;
-      while ((match = pattern.exec(text)) !== null) {
-        let name = match[1] || match[2] || match[0];
-        name = cleanExtractedNameImproved(name);
-        if (name && name.length > 2 && !names.includes(name) && !/^\+?\d+$/.test(name) && !/^[0-9\s]+$/.test(name)) {
-          names.push(name);
-        }
-      }
+  const numberedPattern = /(\d+)\s*[-–—]\s*([^\d\n<]+)/g;
+  let match;
+  while ((match = numberedPattern.exec(html)) !== null) {
+    let name = match[2];
+    name = cleanExtractedName(name);
+    if (name.length > 2 && !names.includes(name) && !/^\+?\d+$/.test(name)) {
+      names.push(name);
     }
-    
-    // البحث عن الكلمات المفتاحية
-    const keywords = ['صاحب', 'مالك', 'المستخدم', 'العميل', 'الشخص', 'الرقم'];
-    for (const keyword of keywords) {
-      const regex = new RegExp(`${keyword}[\\s:]+([^\\n,]+)`, 'gi');
-      let match;
-      while ((match = regex.exec(text)) !== null) {
-        let name = match[1];
-        name = cleanExtractedNameImproved(name);
-        if (name && name.length > 2 && !names.includes(name) && /[\u0600-\u06FF]/.test(name)) {
-          names.push(name);
-        }
-      }
-    }
-    
-  } catch (e) {
-    console.error('خطأ في استخراج الأسماء من HTML:', e);
   }
   
-  // إزالة التكرارات والتصفية
-  return [...new Set(names)]
-    .filter(name => name.length > 2 && name.length < 50 && /[\u0600-\u06FF]/.test(name))
-    .slice(0, 50);
+  const arabicNamePattern = /[\u0600-\u06FF]{3,}(?:\s+[\u0600-\u06FF]{3,}){0,3}/g;
+  let arabicMatch;
+  while ((arabicMatch = arabicNamePattern.exec(html)) !== null) {
+    let name = arabicMatch[0];
+    name = cleanExtractedName(name);
+    if (name.length > 2 && !names.includes(name) && !name.includes('ل') && !/^\+?\d+$/.test(name)) {
+      names.push(name);
+    }
+  }
+  
+  const nameTags = /<[^>]*name[^>]*>([^<]+)<\/[^>]*>/gi;
+  let tagMatch;
+  while ((tagMatch = nameTags.exec(html)) !== null) {
+    let name = tagMatch[1];
+    name = cleanExtractedName(name);
+    if (name.length > 2 && !names.includes(name) && /[\u0600-\u06FF]/.test(name) && !/^\+?\d+$/.test(name)) {
+      names.push(name);
+    }
+  }
+  
+  return [...new Set(names)].slice(0, 100);
 }
 
-function cleanExtractedNameImproved(name) {
-  if (!name) return '';
+function extractNamesAlternative(html) {
+  const names = [];
   
+  const textContent = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+  
+  const arabicPattern = /[\u0600-\u06FF]{3,}(?:\s+[\u0600-\u06FF]{3,}){0,2}/g;
+  let match;
+  while ((match = arabicPattern.exec(textContent)) !== null) {
+    let name = match[0];
+    name = cleanExtractedName(name);
+    if (name.length > 2 && !names.includes(name) && !name.includes('ل') && name.length < 30 && !/^\+?\d+$/.test(name)) {
+      names.push(name);
+    }
+  }
+  
+  const keywords = ['اسم', 'الاسم', 'name', 'user', 'contact', 'صاحب', 'مالك', 'الشهرة', 'المستخدم', 'العميل'];
+  for (const keyword of keywords) {
+    const regex = new RegExp(`${keyword}[\\s:]*([^\\n<,]+)`, 'gi');
+    let match;
+    while ((match = regex.exec(textContent)) !== null) {
+      let name = match[1];
+      name = cleanExtractedName(name);
+      if (name.length > 2 && !names.includes(name) && /[\u0600-\u06FF]/.test(name) && !/^\+?\d+$/.test(name)) {
+        names.push(name);
+      }
+    }
+  }
+  
+  const pattern = /\d+[\s-]+([\u0600-\u06FF\s]+)/g;
+  let patternMatch;
+  while ((patternMatch = pattern.exec(textContent)) !== null) {
+    let name = patternMatch[1];
+    name = cleanExtractedName(name);
+    if (name.length > 2 && !names.includes(name) && !/^\+?\d+$/.test(name)) {
+      names.push(name);
+    }
+  }
+  
+  return [...new Set(names)].slice(0, 50);
+}
+
+function cleanExtractedName(name) {
   return name
-    .replace(/[\\{}{}\[\]"':\-_,\/()]/g, ' ')
-    .replace(/\b(info|country|n|null|undefined|الرقم|اسم|search|phone|نتائج|البحث|للرقم|الشهرة|السجلات|المكتشفة|الأكثر|شيوعاً|اليمن|من|هذا|هذه|كان|مع|عن|على|الى|حتى|بين|أو|و|ف|في|إلى|على|عن|من|إلى|عند|ب|ك|ل|لل|و|ثم|حتى|لكن|ولا|أو|ثم|حيث|بين|عندما|ذلك|هذه|هذا|التي|الذي|الذين|اللاتي|اللواتي|منذ|خلال|بسبب|دون|بينما|حيثما|كلما|متى|أين|كيف|إذا|لن|لم|ما|لا|ليس|سوف|قد|ربما|لعل|ليت|لابد|لعل|لكي|كي|حتّى|حتى|رقم|الهاتف|جوال|mobile|phone|number|هاتف|محمول|التحقق|النتيجة|نتيجة|البحث|عرض|تفاصيل|السجل|السجلات|المستخدم|العميل|الزبون|الشخص|المرسل|المستلم|المالك|صاحب)\b/gi, '')
+    .replace(/\{.*?\}/g, '')
+    .replace(/[\\{}{}\[\]"':\-_,\/]/g, ' ')
+    .replace(/\b(info|country|n|null|undefined|الرقم|اسم|search|phone|نتائج|البحث|للرقم|الشهرة|السجلات|المكتشفة|الأكثر|شيوعاً|اليمن|من|هذا|هذه|كان|مع|عن|على|الى|حتى|بين|أو|و|ف|في|إلى|على|عن|من|إلى|عند|ب|ك|ل|لل|و|ثم|حتى|لكن|ولا|أو|ثم|حيث|بين|عندما|ذلك|هذه|هذا|التي|الذي|الذين|اللاتي|اللواتي|منذ|خلال|بسبب|دون|بينما|حيثما|كلما|متى|أين|كيف|إذا|لن|لم|ما|لا|ليس|سوف|قد|ربما|لعل|ليت|لابد|لعل|لكي|كي|حتّى|حتى)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -614,10 +536,9 @@ function detectProvider(cleanPhone) {
 }
 
 // ==========================================================
-// 🚀 تشغيل الخادم على Deno Deploy
+// 🚀 تشغيل الخادم
 // ==========================================================
 console.log('🚀 تشغيل خادم Deno Deploy...');
-console.log(`🔥 Firecrawl API Key: ${FIRECRAWL_API_KEY ? '✅ موجود' : '❌ غير موجود'}`);
+console.log('📌 الخادم يعمل على المنفذ 8000');
 
-// Deno Deploy يستخدم Deno.serve مباشرة
-Deno.serve(handler);
+Deno.serve({ port: 8000, hostname: "0.0.0.0" }, handler);

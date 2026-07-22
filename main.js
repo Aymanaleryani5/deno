@@ -301,9 +301,9 @@ async function handler(request) {
           rawData = data;
           console.log('✅ استجابة Firecrawl مستلمة');
           
-          // استراتيجية 1: استخراج من JSON
+          // محاولة استخراج من JSON أولاً
           if (data.data && data.data.json) {
-            const extractedNames = extractNamesFromJSON(data.data.json);
+            const extractedNames = extractNamesFromJSONImproved(data.data.json);
             if (extractedNames.length > 0) {
               names = extractedNames;
               success = true;
@@ -312,24 +312,16 @@ async function handler(request) {
             }
           }
           
-          // استراتيجية 2: استخراج من HTML
+          // إذا فشل JSON، جرب HTML مع تحسينات
           if (!success || names.length === 0) {
             const htmlContent = data.data?.html || data.html || data.content || '';
             if (htmlContent && htmlContent.length >= 50) {
-              const extractedNames = extractNamesFromResponse(htmlContent);
+              const extractedNames = extractNamesFromHTMLImproved(htmlContent);
               if (extractedNames.length > 0) {
                 names = extractedNames;
                 success = true;
                 source = 'firecrawl_html';
-                console.log(`✅ استخراج ${names.length} اسم من HTML`);
-              } else {
-                const alternativeNames = extractNamesAlternative(htmlContent);
-                if (alternativeNames.length > 0) {
-                  names = alternativeNames;
-                  success = true;
-                  source = 'firecrawl_alternative';
-                  console.log(`✅ استخراج ${names.length} اسم (طريقة بديلة)`);
-                }
+                console.log(`✅ استخراج ${names.length} اسم من HTML (محسن)`);
               }
             }
           }
@@ -372,22 +364,22 @@ async function handler(request) {
           if (contentType.includes('application/json')) {
             const jsonData = await response.json();
             rawData = jsonData;
-            const extractedNames = extractNamesFromJSON(jsonData);
+            const extractedNames = extractNamesFromJSONImproved(jsonData);
             if (extractedNames.length > 0) {
               names = extractedNames;
               success = true;
               source = 'direct_json';
-              console.log(`✅ استخراج ${names.length} اسم من JSON مباشر`);
+              console.log(`✅ استخراج ${names.length} اسم من JSON مباشر (محسن)`);
             }
           } else {
             const htmlContent = await response.text();
             if (htmlContent && htmlContent.length >= 50) {
-              const extractedNames = extractNamesFromResponse(htmlContent);
+              const extractedNames = extractNamesFromHTMLImproved(htmlContent);
               if (extractedNames.length > 0) {
                 names = extractedNames;
                 success = true;
                 source = 'direct_scrape';
-                console.log(`✅ استخراج ${names.length} اسم من HTML مباشر`);
+                console.log(`✅ استخراج ${names.length} اسم من HTML مباشر (محسن)`);
               }
             }
           }
@@ -463,140 +455,152 @@ async function handler(request) {
 }
 
 // ==========================================================
-// 📝 دوال استخراج الأسماء
+// 📝 دوال استخراج الأسماء المحسنة
 // ==========================================================
 
-function extractNamesFromJSON(jsonData) {
+function extractNamesFromJSONImproved(jsonData) {
   const names = [];
   
   try {
-    if (jsonData.result) {
-      const text = jsonData.result;
-      
-      const fameMatch = text.match(/اسم الشهرة[:\s]+([^\n]+)/);
-      if (fameMatch) {
-        let name = fameMatch[1].trim();
-        name = cleanExtractedName(name);
-        if (name && name.length > 2 && !names.includes(name) && !/^\+?\d+$/.test(name)) {
-          names.push(name);
-        }
-      }
-      
-      const numberedMatches = text.match(/\d+\s*[-–—]\s*([^\d\n]+)/g);
-      if (numberedMatches) {
-        numberedMatches.forEach(m => {
-          const nameMatch = m.match(/\d+\s*[-–—]\s*([^\d\n]+)/);
-          if (nameMatch) {
-            let name = nameMatch[1].trim();
-            name = cleanExtractedName(name);
-            if (name && name.length > 2 && !names.includes(name) && !/^\+?\d+$/.test(name)) {
+    // محاولة استخراج من جميع الحقول الممكنة
+    const possibleFields = ['result', 'data', 'results', 'names', 'users', 'contacts', 'items'];
+    
+    for (const field of possibleFields) {
+      if (jsonData[field]) {
+        const text = typeof jsonData[field] === 'string' ? jsonData[field] : JSON.stringify(jsonData[field]);
+        
+        // استخراج الأسماء بتنسيقات مختلفة
+        const patterns = [
+          /اسم[\s_:]+([^\n,]+)/gi,
+          /الاسم[\s_:]+([^\n,]+)/gi,
+          /name[\s_:]+([^\n,]+)/gi,
+          /full_name[\s_:]+([^\n,]+)/gi,
+          /user[\s_:]+([^\n,]+)/gi,
+          /contact[\s_:]+([^\n,]+)/gi,
+          /(\d+)\s*[-–—]\s*([^\d\n,]+)/g,
+          /([\u0600-\u06FF]{3,}(?:\s+[\u0600-\u06FF]{3,}){0,4})/g
+        ];
+        
+        for (const pattern of patterns) {
+          let match;
+          while ((match = pattern.exec(text)) !== null) {
+            let name = match[1] || match[2] || match[0];
+            name = cleanExtractedNameImproved(name);
+            if (name && name.length > 2 && !names.includes(name) && !/^\+?\d+$/.test(name) && !/^[0-9\s]+$/.test(name)) {
               names.push(name);
             }
           }
-        });
-      }
-      
-      const arabicPattern = /[\u0600-\u06FF]{3,}(?:\s+[\u0600-\u06FF]{3,}){0,3}/g;
-      let arabicMatch;
-      while ((arabicMatch = arabicPattern.exec(text)) !== null) {
-        let name = arabicMatch[0];
-        name = cleanExtractedName(name);
-        if (name.length > 2 && !names.includes(name) && !name.includes('ل') && !/^\+?\d+$/.test(name)) {
-          names.push(name);
+        }
+        
+        // إذا كان الحقل مصفوفة
+        if (Array.isArray(jsonData[field])) {
+          for (const item of jsonData[field]) {
+            if (typeof item === 'string') {
+              const cleaned = cleanExtractedNameImproved(item);
+              if (cleaned && cleaned.length > 2 && !names.includes(cleaned) && /[\u0600-\u06FF]/.test(cleaned)) {
+                names.push(cleaned);
+              }
+            } else if (typeof item === 'object' && item !== null) {
+              for (const key of ['name', 'full_name', 'user', 'contact', 'username', 'title']) {
+                if (item[key] && typeof item[key] === 'string') {
+                  const cleaned = cleanExtractedNameImproved(item[key]);
+                  if (cleaned && cleaned.length > 2 && !names.includes(cleaned) && /[\u0600-\u06FF]/.test(cleaned)) {
+                    names.push(cleaned);
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }
+    
+    // البحث في النص ككل إذا كان jsonData.result موجود
+    if (jsonData.result && typeof jsonData.result === 'string') {
+      const text = jsonData.result;
+      const allNames = text.match(/[\u0600-\u06FF]{3,}(?:\s+[\u0600-\u06FF]{3,}){0,4}/g);
+      if (allNames) {
+        for (const name of allNames) {
+          const cleaned = cleanExtractedNameImproved(name);
+          if (cleaned && cleaned.length > 2 && !names.includes(cleaned) && !/^\+?\d+$/.test(cleaned) && !/^[0-9\s]+$/.test(cleaned)) {
+            names.push(cleaned);
+          }
+        }
+      }
+    }
+    
   } catch (e) {
     console.error('خطأ في استخراج الأسماء من JSON:', e);
   }
   
+  // إزالة التكرارات والتصفية
   return [...new Set(names)]
-    .filter(name => !/^[\d+\s]+$/.test(name))
-    .slice(0, 20);
+    .filter(name => name.length > 2 && name.length < 50 && /[\u0600-\u06FF]/.test(name))
+    .slice(0, 50);
 }
 
-function extractNamesFromResponse(html) {
+function extractNamesFromHTMLImproved(html) {
   const names = [];
   
-  const numberedPattern = /(\d+)\s*[-–—]\s*([^\d\n<]+)/g;
-  let match;
-  while ((match = numberedPattern.exec(html)) !== null) {
-    let name = match[2];
-    name = cleanExtractedName(name);
-    if (name.length > 2 && !names.includes(name) && !/^\+?\d+$/.test(name)) {
-      names.push(name);
-    }
-  }
-  
-  const arabicNamePattern = /[\u0600-\u06FF]{3,}(?:\s+[\u0600-\u06FF]{3,}){0,3}/g;
-  let arabicMatch;
-  while ((arabicMatch = arabicNamePattern.exec(html)) !== null) {
-    let name = arabicMatch[0];
-    name = cleanExtractedName(name);
-    if (name.length > 2 && !names.includes(name) && !name.includes('ل') && !/^\+?\d+$/.test(name)) {
-      names.push(name);
-    }
-  }
-  
-  const nameTags = /<[^>]*name[^>]*>([^<]+)<\/[^>]*>/gi;
-  let tagMatch;
-  while ((tagMatch = nameTags.exec(html)) !== null) {
-    let name = tagMatch[1];
-    name = cleanExtractedName(name);
-    if (name.length > 2 && !names.includes(name) && /[\u0600-\u06FF]/.test(name) && !/^\+?\d+$/.test(name)) {
-      names.push(name);
-    }
-  }
-  
-  return [...new Set(names)].slice(0, 100);
-}
-
-function extractNamesAlternative(html) {
-  const names = [];
-  
-  const textContent = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
-  
-  const arabicPattern = /[\u0600-\u06FF]{3,}(?:\s+[\u0600-\u06FF]{3,}){0,2}/g;
-  let match;
-  while ((match = arabicPattern.exec(textContent)) !== null) {
-    let name = match[0];
-    name = cleanExtractedName(name);
-    if (name.length > 2 && !names.includes(name) && !name.includes('ل') && name.length < 30 && !/^\+?\d+$/.test(name)) {
-      names.push(name);
-    }
-  }
-  
-  const keywords = ['اسم', 'الاسم', 'name', 'user', 'contact', 'صاحب', 'مالك', 'الشهرة', 'المستخدم', 'العميل'];
-  for (const keyword of keywords) {
-    const regex = new RegExp(`${keyword}[\\s:]*([^\\n<,]+)`, 'gi');
-    let match;
-    while ((match = regex.exec(textContent)) !== null) {
-      let name = match[1];
-      name = cleanExtractedName(name);
-      if (name.length > 2 && !names.includes(name) && /[\u0600-\u06FF]/.test(name) && !/^\+?\d+$/.test(name)) {
-        names.push(name);
+  try {
+    // إزالة الوسوم
+    let text = html.replace(/<[^>]*>/g, ' ');
+    text = text.replace(/\s+/g, ' ');
+    
+    // استخراج الأسماء بتنسيقات متعددة
+    const patterns = [
+      /اسم[\s_:]+([^\n,]+)/gi,
+      /الاسم[\s_:]+([^\n,]+)/gi,
+      /name[\s_:]+([^\n,]+)/gi,
+      /full_name[\s_:]+([^\n,]+)/gi,
+      /user[\s_:]+([^\n,]+)/gi,
+      /contact[\s_:]+([^\n,]+)/gi,
+      /(\d+)\s*[-–—]\s*([^\d\n,]+)/g,
+      /([\u0600-\u06FF]{3,}(?:\s+[\u0600-\u06FF]{3,}){0,4})/g,
+      /<[^>]*>([\u0600-\u06FF]{3,})[^<]*<\/[^>]*>/g
+    ];
+    
+    for (const pattern of patterns) {
+      let match;
+      while ((match = pattern.exec(text)) !== null) {
+        let name = match[1] || match[2] || match[0];
+        name = cleanExtractedNameImproved(name);
+        if (name && name.length > 2 && !names.includes(name) && !/^\+?\d+$/.test(name) && !/^[0-9\s]+$/.test(name)) {
+          names.push(name);
+        }
       }
     }
-  }
-  
-  const pattern = /\d+[\s-]+([\u0600-\u06FF\s]+)/g;
-  let patternMatch;
-  while ((patternMatch = pattern.exec(textContent)) !== null) {
-    let name = patternMatch[1];
-    name = cleanExtractedName(name);
-    if (name.length > 2 && !names.includes(name) && !/^\+?\d+$/.test(name)) {
-      names.push(name);
+    
+    // البحث عن الكلمات المفتاحية
+    const keywords = ['صاحب', 'مالك', 'المستخدم', 'العميل', 'الشخص', 'الرقم'];
+    for (const keyword of keywords) {
+      const regex = new RegExp(`${keyword}[\\s:]+([^\\n,]+)`, 'gi');
+      let match;
+      while ((match = regex.exec(text)) !== null) {
+        let name = match[1];
+        name = cleanExtractedNameImproved(name);
+        if (name && name.length > 2 && !names.includes(name) && /[\u0600-\u06FF]/.test(name)) {
+          names.push(name);
+        }
+      }
     }
+    
+  } catch (e) {
+    console.error('خطأ في استخراج الأسماء من HTML:', e);
   }
   
-  return [...new Set(names)].slice(0, 50);
+  // إزالة التكرارات والتصفية
+  return [...new Set(names)]
+    .filter(name => name.length > 2 && name.length < 50 && /[\u0600-\u06FF]/.test(name))
+    .slice(0, 50);
 }
 
-function cleanExtractedName(name) {
+function cleanExtractedNameImproved(name) {
+  if (!name) return '';
+  
   return name
-    .replace(/\{.*?\}/g, '')
-    .replace(/[\\{}{}\[\]"':\-_,\/]/g, ' ')
-    .replace(/\b(info|country|n|null|undefined|الرقم|اسم|search|phone|نتائج|البحث|للرقم|الشهرة|السجلات|المكتشفة|الأكثر|شيوعاً|اليمن|من|هذا|هذه|كان|مع|عن|على|الى|حتى|بين|أو|و|ف|في|إلى|على|عن|من|إلى|عند|ب|ك|ل|لل|و|ثم|حتى|لكن|ولا|أو|ثم|حيث|بين|عندما|ذلك|هذه|هذا|التي|الذي|الذين|اللاتي|اللواتي|منذ|خلال|بسبب|دون|بينما|حيثما|كلما|متى|أين|كيف|إذا|لن|لم|ما|لا|ليس|سوف|قد|ربما|لعل|ليت|لابد|لعل|لكي|كي|حتّى|حتى)\b/gi, '')
+    .replace(/[\\{}{}\[\]"':\-_,\/()]/g, ' ')
+    .replace(/\b(info|country|n|null|undefined|الرقم|اسم|search|phone|نتائج|البحث|للرقم|الشهرة|السجلات|المكتشفة|الأكثر|شيوعاً|اليمن|من|هذا|هذه|كان|مع|عن|على|الى|حتى|بين|أو|و|ف|في|إلى|على|عن|من|إلى|عند|ب|ك|ل|لل|و|ثم|حتى|لكن|ولا|أو|ثم|حيث|بين|عندما|ذلك|هذه|هذا|التي|الذي|الذين|اللاتي|اللواتي|منذ|خلال|بسبب|دون|بينما|حيثما|كلما|متى|أين|كيف|إذا|لن|لم|ما|لا|ليس|سوف|قد|ربما|لعل|ليت|لابد|لعل|لكي|كي|حتّى|حتى|رقم|الهاتف|جوال|mobile|phone|number|هاتف|محمول|التحقق|النتيجة|نتيجة|البحث|عرض|تفاصيل|السجل|السجلات|المستخدم|العميل|الزبون|الشخص|المرسل|المستلم|المالك|صاحب)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 }

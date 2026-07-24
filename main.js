@@ -590,16 +590,17 @@ function extractNamesAlternative(html) {
   
   return [...new Set(names)].slice(0, 50);
 }
-
 function cleanExtractedName(name) {
+  if (!name) return '';
   return name
+    .replace(/نتائج\s*البحث\s*للرقم/gi, '') // إزالة جملة نتائج البحث للرقم
+    .replace(/\|{2,}\s*split\s*\|{2,}/gi, '') // إزالة فاصل الـ split
     .replace(/\{.*?\}/g, '')
     .replace(/[\\{}{}\[\]"':\-_,\/]/g, ' ')
     .replace(/\b(info|country|n|null|undefined|الرقم|اسم|search|phone|نتائج|البحث|للرقم|الشهرة|السجلات|المكتشفة|الأكثر|شيوعاً|اليمن|من|هذا|هذه|كان|مع|عن|على|الى|حتى|بين|أو|و|ف|في|إلى|على|عن|من|إلى|عند|ب|ك|ل|لل|و|ثم|حتى|لكن|ولا|أو|ثم|حيث|بين|عندما|ذلك|هذه|هذا|التي|الذي|الذين|اللاتي|اللواتي|منذ|خلال|بسبب|دون|بينما|حيثما|كلما|متى|أين|كيف|إذا|لن|لم|ما|لا|ليس|سوف|قد|ربما|لعل|ليت|لابد|لعل|لكي|كي|حتّى|حتى)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
-
 function detectProvider(cleanPhone) {
   if (/^(77|78)[0-9]{7}$/.test(cleanPhone)) return 'يمن موبايل';
   if (/^(73)[0-9]{7}$/.test(cleanPhone)) return 'YOU';
